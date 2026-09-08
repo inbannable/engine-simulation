@@ -1,0 +1,259 @@
+.panel,
+.selector,
+.scenarioStrip,
+.cueBar,
+.coldOverlay,
+.chart {
+  color: #e8edf5;
+  background: color-mix(in srgb, #111820 92%, transparent);
+  border: 1px solid #35404c;
+  border-radius: 0.65rem;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.selector,
+.scenarioStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  margin: 0;
+}
+
+.selector button,
+.scenarioStrip button,
+.soundButton,
+.skipButton {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.75rem;
+  color: #cbd5e1;
+  background: #18222d;
+  border: 1px solid #435161;
+  border-radius: 0.4rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.selector button[aria-pressed='true'],
+.scenarioStrip button[aria-pressed='true'] {
+  color: #fff;
+  background: #243b4d;
+  border-color: #7fc8ff;
+  box-shadow: inset 0 -3px #7fc8ff;
+}
+
+.selector button:focus-visible,
+.scenarioStrip button:focus-visible,
+.soundButton:focus-visible,
+.skipButton:focus-visible {
+  outline: 3px solid #f5b667;
+  outline-offset: 2px;
+}
+
+.scenarioStrip button span {
+  display: block;
+  font-size: 0.8rem;
+  color: #98a7b8;
+}
+
+.panel {
+  padding: 0.85rem;
+}
+
+.panel h2,
+.chart h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.statusGrid div {
+  padding: 0.55rem;
+  background: #18212a;
+  border-left: 3px solid #617080;
+}
+
+.statusGrid dt {
+  color: #9eacba;
+  font-size: 0.85rem;
+}
+
+.statusGrid dd {
+  margin: 0.15rem 0 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.legend {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.2rem;
+  margin-top: 0.8rem;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.legend i {
+  display: block;
+  height: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.legend i:nth-child(1) {
+  background: #1f63d7;
+}
+
+.legend i:nth-child(2) {
+  background: #36c9cb;
+}
+
+.legend i:nth-child(3) {
+  background: #f59335;
+}
+
+.legend i:nth-child(4) {
+  background: #fff2dc;
+}
+
+.key {
+  margin: 0.8rem 0 0;
+  color: #b8c3cf;
+  font-size: 0.86rem;
+}
+
+.k1,
+.k2 {
+  display: inline-block;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  font-weight: 700;
+}
+
+.k1 {
+  color: #ffad55;
+}
+
+.k2 {
+  color: #59bdff;
+}
+
+.audioRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-top: 0.8rem;
+}
+
+.audioRow output {
+  color: #aeb9c5;
+}
+
+.chart {
+  padding: 0.8rem;
+}
+
+.chart svg {
+  display: block;
+  width: 100%;
+  min-height: 12rem;
+}
+
+.chartLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.82rem;
+}
+
+.chartLegend span {
+  display: inline-block;
+  width: 1.6rem;
+  margin-right: 0.3rem;
+  border-top: 3px solid currentColor;
+}
+
+.cueBar {
+  display: grid;
+  grid-template-columns: auto minmax(7rem, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.cueBar progress,
+.coldOverlay progress {
+  width: 100%;
+  accent-color: #75bfff;
+}
+
+.coldOverlay {
+  position: absolute;
+  inset: auto 1rem 1rem;
+  max-width: 30rem;
+  padding: 1rem;
+  box-shadow: 0 1rem 3rem #0008;
+}
+
+.coldOverlay h2,
+.coldOverlay p {
+  margin: 0 0 0.65rem;
+}
+
+.skipButton {
+  width: 100%;
+  margin-top: 0.7rem;
+}
+
+@media (max-width: 640px) {
+  .selector,
+  .scenarioStrip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .selector button,
+  .scenarioStrip button {
+    flex: 0 0 auto;
+  }
+
+  .cueBar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .cueBar progress {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .selector *,
+  .scenarioStrip *,
+  .cueBar *,
+  .coldOverlay * {
+    scroll-behavior: auto;
+    transition: none !important;
+    animation: none !important;
+  }
+}
