@@ -1,0 +1,41 @@
+✔ one 720-degree cycle fires five times in 1-2-4-5-3 order (1.9354ms)
+✔ five cylinder teaching pressure traces retain their crank phase offsets (19.49ms)
+✔ cold start builds oil pressure and settles near 800 rpm (55.4712ms)
+✔ turbo spool, lag and lift-off decay are bounded and continuous (15.2663ms)
+✔ warm full-load mean torque matches the 500 Nm and 294 kW anchors (19.8257ms)
+✔ cold engine warms, thermostat has hysteresis, and stopped engine cools (803.8915ms)
+✔ oil pressure rises with rpm and cold viscosity raises pressure (7.4ms)
+✔ DCT line and piston pressure precede clutch engagement (1.2155ms)
+✔ DCT slip dissipation is non-negative and clutch discs cool afterward (44.9679ms)
+✔ 30/60/120 FPS, slow motion and different chunks give identical state (41.5211ms)
+✔ bench target speed remains controllable across the 0-100% load range (54.9906ms)
+✔ all public numeric state remains finite and absolute pressures stay positive (21.4025ms)
+✔ powertrain adapter observes without mutating the existing solver state (8.2195ms)
+✔ export contains all named animation anchors and separate shells (17.6891ms)
+✔ chain envelope keeps both stages outside sprocket circles (1.9563ms)
+✔ 720 degrees: exactly five correctly spaced firings, no duplicate boundaries (2.1546ms)
+✔ all cylinders have exact 92.8mm stroke and constant rod length (21.4869ms)
+✔ valve sequence and half-speed camshaft (0.5555ms)
+✔ analytic RPM transition and angle are independent of frame rate (0.8295ms)
+✔ incoming clutch waits for neutral clearance and full dog sleeve travel (18.2583ms)
+✔ drive and reverse from neutral select the dog before delivering torque (16.1853ms)
+✔ official torque platform, power range, independent final drives (0.2684ms)
+✔ all gears satisfy lock constraint and wheel torque sum (1.8763ms)
+✔ friction impulse is passive over both torque directions (0.4153ms)
+✔ adjacent shifts finish without speed or rpm jumps and without double lock (36.8108ms)
+✔ same simulated input at 30/60/120 fps and slow motion is deterministic (31.5699ms)
+✔ neutral, creep, launch, stop, reverse interlock and overrev refusal (18.9789ms)
+✔ unselected target incurs preparation; selector travel is bounded and continuous (3.0208ms)
+✔ D shifts earlier than S; each automatic shift respects minimum hold (42.3507ms)
+✔ queued requests recheck rpm and neutral cancels all drive (2.0023ms)
+✔ system hierarchy and all 26 ordered canonical paths (4.8718ms)
+✔ rotor local origins, axes and motion metadata remain explicit (0.4631ms)
+✔ GLB transmission anchors, shaft membership, ratios and selector travel (18.8ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1507.2163

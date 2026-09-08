@@ -1,0 +1,6 @@
+{
+  "original_nodes_verified": 1622,
+  "mesh_nodes_with_identical_positions_normals_indices": 1431,
+  "texture_count_preserved": 1,
+  "preserved": "node transforms, children names, extras, positions, normals, triangle indices"
+}
