@@ -1,4 +1,11 @@
 import * as T from 'three';
+import {
+  GEARS,
+  SYNC_GROUPS,
+  gearInfo,
+  type Gear,
+  type PowertrainState,
+} from './powertrain';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -6,15 +13,18 @@ import { chainEnvelope } from './chain';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { evaluateEngine, STAGES, mod, type SimulationState } from './physics';
 export const CAMERAS: Record<string, number[]> = {
-  iso: [-700, 530, 820],
-  intake: [0, 320, 1050],
-  exhaust: [0, 350, -1100],
+  iso: [-950, 660, 1200],
+  intake: [140, 360, 1550],
+  exhaust: [140, 400, -1550],
   timing: [1000, 300, 180],
-  top: [0, 1180, 1],
+  top: [140, 1600, 1],
+  gearbox: [1100, 440, 720],
+  clutch: [180, 100, 470],
+  gears: [160, 340, 530],
   section: [-150, 270, 1000],
 };
 export interface SceneHandle {
-  update: (state: SimulationState) => void;
+  update: (state: SimulationState, powertrain?: PowertrainState) => void;
   camera: (name: string) => void;
   dispose: () => void;
   metrics: () => { calls: number; triangles: number };
@@ -22,18 +32,30 @@ export interface SceneHandle {
 function mergeStaticChildren(parent: T.Object3D) {
   for (const child of parent.children)
     if (!(child instanceof T.Mesh)) mergeStaticChildren(child);
-  const batches = new Map<T.Material, T.Mesh[]>();
+  const batches = new Map<string, { material: T.Material; meshes: T.Mesh[] }>();
   for (const child of parent.children)
     if (
       child instanceof T.Mesh &&
       !Array.isArray(child.material) &&
       !child.name.includes('Spring_')
     ) {
-      const batch = batches.get(child.material) || [];
-      batch.push(child);
-      batches.set(child.material, batch);
+      // Cast textures and curve-derived hoses can have different UV layouts.
+      // Only merge compatible attribute sets; otherwise Three rejects the batch.
+      const layout = Object.entries(
+        (child.geometry as T.BufferGeometry).attributes,
+      )
+        .map(([name, attr]) => `${name}:${attr.itemSize}:${attr.normalized}`)
+        .sort()
+        .join('|');
+      const key = `${child.material.uuid}:${layout}`;
+      const batch = batches.get(key) || {
+        material: child.material,
+        meshes: [] as T.Mesh[],
+      };
+      batch.meshes.push(child);
+      batches.set(key, batch);
     }
-  for (const [material, meshes] of batches) {
+  for (const { material, meshes } of batches.values()) {
     if (meshes.length < 2) continue;
     const geometries = meshes.map((m) => {
       m.updateMatrix();
@@ -84,7 +106,17 @@ export async function createScene(
   const setCamera = (name: string) => {
     activeCamera = name;
     const p = CAMERAS[name] || CAMERAS.iso;
-    controls.target.set(0, 135, 0);
+    controls.target.set(
+      ['gearbox', 'clutch', 'gears'].includes(name)
+        ? name === 'clutch'
+          ? 335
+          : 460
+        : name === 'section' || name === 'timing'
+          ? 0
+          : 130,
+      135,
+      0,
+    );
     const fit = Math.max(1, 0.98 / Math.max(0.3, camera.aspect));
     camera.position
       .set(p[0], p[1] - 135, p[2])
@@ -119,11 +151,11 @@ export async function createScene(
     }),
   );
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -100;
+  floor.position.y = -153;
   scene.add(floor);
   // Faint engineering datum under the assembly.
-  const grid = new T.GridHelper(950, 19, 0x404851, 0x2b333d);
-  grid.position.y = -99;
+  const grid = new T.GridHelper(1350, 27, 0x404851, 0x2b333d);
+  grid.position.set(130, -152, 0);
   (grid.material as T.Material).transparent = true;
   (grid.material as T.Material).opacity = 0.3;
   scene.add(grid);
@@ -223,6 +255,72 @@ export async function createScene(
     const o = node(name);
     if (o) o.rotation.x = angle;
   };
+  const torquePaths = GEARS.map((spec) => {
+    const group = new T.Group();
+    const anchor = node('Gear_' + spec.gear);
+    const pos = anchor?.position ?? new T.Vector3();
+    const points = [
+      new T.Vector3(340, 0, 22),
+      new T.Vector3(pos.x, 0, 22),
+      new T.Vector3(pos.x, pos.y, pos.z + 22),
+      new T.Vector3(575, pos.y, pos.z + 22),
+    ];
+    if (spec.gear === -1) points.splice(2, 0, new T.Vector3(pos.x, 45, -26));
+    points.push(new T.Vector3(575, 45, 22));
+    const color = spec.clutch ? 0x59bdff : 0xffad55;
+    const material = new T.MeshBasicMaterial({
+      color,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.95,
+      toneMapped: false,
+    });
+    const haloMaterial = new T.MeshBasicMaterial({
+      color,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.16,
+      toneMapped: false,
+    });
+    const segments: {
+      start: T.Vector3;
+      direction: T.Vector3;
+      length: number;
+      markers: T.Mesh[];
+    }[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const delta = points[i + 1].clone().sub(points[i]);
+      const length = delta.length();
+      if (length < 1) continue;
+      const direction = delta.normalize();
+      const curve = new T.LineCurve3(points[i], points[i + 1]);
+      for (const [radius, mat, order] of [
+        [5, haloMaterial, 100],
+        [2.1, material, 101],
+      ] as const) {
+        const tube = new T.Mesh(
+          new T.TubeGeometry(curve, 1, radius, 8, false),
+          mat,
+        );
+        tube.renderOrder = order;
+        group.add(tube);
+      }
+      const markers = Array.from(
+        { length: Math.max(1, Math.floor(length / 26)) },
+        () => {
+          const marker = new T.Mesh(new T.ConeGeometry(5.8, 15, 12), material);
+          marker.renderOrder = 102;
+          group.add(marker);
+          return marker;
+        },
+      );
+      segments.push({ start: points[i], direction, length, markers });
+    }
+    model.add(group);
+    return { spec, group, segments, material, haloMaterial };
+  });
   const effects = new T.Group();
   scene.add(effects);
   const gas: T.Mesh[] = [];
@@ -363,7 +461,22 @@ export async function createScene(
   };
   renderer.domElement.addEventListener('pointerdown', onDown);
   renderer.domElement.addEventListener('pointerup', onUp);
-  const update = (state: SimulationState) => {
+  model?.traverse((o) => {
+    if (!o.userData.ptMotion) return;
+    o.traverse((child) => {
+      if (
+        child instanceof T.Mesh &&
+        child.material instanceof T.MeshStandardMaterial
+      ) {
+        child.material = child.material.clone();
+        child.material.emissive.copy(child.material.color);
+        child.material.emissiveIntensity = 0;
+        child.material.userData.ptTint = true;
+        child.material.userData.ptBaseColor = child.material.color.clone();
+      }
+    });
+  });
+  const update = (state: SimulationState, powertrain?: PowertrainState) => {
     if (dead) return;
     const cs = evaluateEngine(state.angle),
       a = (state.angle * Math.PI) / 180;
@@ -376,9 +489,127 @@ export async function createScene(
       setVisible('RearShell', !mech);
       setVisible('Body', solid);
       setVisible('Accessories', solid);
+      setVisible('EngineDetail', solid);
+      setVisible('Transmission', true);
+      setVisible('TransmissionHousing', solid);
+      setVisible('TransmissionFittings', solid);
+      setVisible('TransmissionOutputs', solid);
+      setVisible('TransmissionRearSection', mode === 'cutaway');
       setVisible('Timing', true);
     }
     setVisible('Cover', solid && state.cover);
+    const pt = powertrain;
+    for (const {
+      spec,
+      group,
+      segments,
+      material,
+      haloMaterial,
+    } of torquePaths) {
+      const torque =
+        pt?.selected[spec.clutch] === spec.gear
+          ? pt.clutches[spec.clutch].torque
+          : 0;
+      group.visible = !solid && Math.abs(torque) > 1;
+      material.opacity = 0.8 + 0.2 * Math.min(1, Math.abs(torque) / 500);
+      haloMaterial.opacity = 0.12 + 0.14 * Math.min(1, Math.abs(torque) / 500);
+      if (!group.visible) continue;
+      const sign = torque >= 0 ? 1 : -1;
+      for (const segment of segments) {
+        segment.markers.forEach((marker, i) => {
+          const fraction = mod(
+            i / segment.markers.length +
+              ((pt!.time * 350) / segment.length) * sign,
+            1,
+          );
+          marker.position
+            .copy(segment.start)
+            .addScaledVector(
+              segment.direction,
+              8 + fraction * Math.max(0, segment.length - 16),
+            );
+          marker.quaternion.setFromUnitVectors(
+            new T.Vector3(0, 1, 0),
+            segment.direction.clone().multiplyScalar(sign),
+          );
+        });
+      }
+    }
+    model?.traverse((o) => {
+      const motion = o.userData.ptMotion;
+      if (!motion) return;
+      const index = Number(o.userData.clutch ?? 0);
+      const g = Number(o.userData.gear ?? 0) as Gear;
+      const spec = gearInfo(g);
+      if (motion === 'engine') o.rotation.x = a;
+      if (motion === 'input') o.rotation.x = pt ? pt.inputAngle[index] : 0;
+      if (motion === 'output')
+        o.rotation.x = pt ? -pt.wheelAngle * Number(o.userData.final) : 0;
+      if (motion === 'wheel') o.rotation.x = pt?.wheelAngle ?? 0;
+      if (motion === 'gear' && spec)
+        o.rotation.x = pt ? -pt.inputAngle[spec.clutch] / spec.ratio : 0;
+      if (motion === 'sleeve' || motion === 'fork') {
+        const gears = o.userData.gears as number[];
+        const syncIndex = SYNC_GROUPS.findIndex(
+          (pair) => pair[0] === gears[0] && pair[1] === gears[1],
+        );
+        o.position.x =
+          Number(o.userData.baseX) + (pt?.selectorPositions[syncIndex] ?? 0);
+        if (motion === 'sleeve')
+          o.rotation.x = pt ? -pt.wheelAngle * Number(o.userData.final) : 0;
+      }
+      if (motion === 'clutch') {
+        o.rotation.x = pt ? pt.inputAngle[index] : 0;
+      }
+      if (motion === 'plate') {
+        // Steel discs follow the basket; friction discs follow the input hub.
+        // Counter the hub parent rotation so open-clutch slip remains visible.
+        o.rotation.x = o.userData.driving
+          ? a - (pt?.inputAngle[index] ?? 0)
+          : 0;
+        o.position.x =
+          Number(o.userData.baseX) *
+          (1 - (pt?.clutches[index].engagement ?? 0) * 0.16);
+      }
+      if (motion === 'piston') {
+        o.rotation.x = a;
+        o.position.x =
+          Number(o.userData.baseX) -
+          (pt?.clutches[index].engagement ?? 0) * 2.2;
+      }
+      const active = pt
+        ? GEARS.filter(
+            (gear) =>
+              pt.selected[gear.clutch] === gear.gear &&
+              Math.abs(pt.clutches[gear.clutch].torque) > 1,
+          )
+        : [];
+      const through = active.filter((gear) => {
+        if (g) return gear.gear === g || (g === 2 && gear.gear === -1);
+        if (motion === 'output') return gear.final === Number(o.userData.final);
+        if (motion === 'wheel') return true;
+        if (motion === 'sleeve' || motion === 'fork')
+          return (o.userData.gears as number[]).includes(gear.gear);
+        if (motion === 'engine' && o.name === 'DCTFlywheel') return true;
+        return gear.clutch === index;
+      });
+      const carrying = through.length > 0;
+      const pathColor = new T.Color(through[0]?.clutch ? 0x59bdff : 0xffad55);
+      o.traverse((child) => {
+        if (
+          child instanceof T.Mesh &&
+          child.material instanceof T.MeshStandardMaterial &&
+          child.material.userData.ptTint
+        ) {
+          const focus = !!pt && !solid;
+          const base = child.material.userData.ptBaseColor as T.Color;
+          child.material.color.copy(focus && carrying ? pathColor : base);
+          if (focus && !carrying) child.material.color.multiplyScalar(0.28);
+          child.material.emissive.copy(pathColor);
+          child.material.emissiveIntensity = focus && carrying ? 1.7 : 0;
+        }
+      });
+    });
     rotate('Crankshaft', a);
     rotate('IntakeCam', a / 2);
     rotate('ExhaustCam', a / 2);
@@ -470,7 +701,7 @@ export async function createScene(
     }
     if (model) {
       const vibration =
-        state.vibration && state.playing && solid
+        state.vibration && (state.playing || !!powertrain) && solid
           ? Math.min(0.8, state.rpm / 9000)
           : 0;
       model.position.y = Math.sin(a) * vibration;

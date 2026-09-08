@@ -31,6 +31,8 @@ import {
   type SimulationState,
   type ViewMode,
 } from '../engine/physics';
+import { Powertrain } from '../engine/powertrain';
+import { PowertrainPanel } from './PowertrainPanel';
 import { EngineAudio } from '../engine/audio';
 import type { SceneHandle } from '../engine/scene';
 const MODES = [
@@ -43,10 +45,16 @@ const CAMERA_OPTIONS = [
   ['intake', '进气侧'],
   ['exhaust', '排气侧'],
   ['timing', '正时侧'],
+  ['gearbox', '变速箱'],
+  ['clutch', '双离合特写'],
+  ['gears', '齿轮路径'],
   ['top', '顶部'],
   ['section', '五缸剖面'],
 ];
 export default function Home() {
+  const [powertrain] = useState(() => new Powertrain());
+  const linkedRef = useRef(false);
+  const [linked, setLinked] = useState(false);
   const infoDialog = useRef<HTMLDialogElement>(null);
   const canvas = useRef<HTMLDivElement>(null),
     scene = useRef<SceneHandle | null>(null),
@@ -68,6 +76,8 @@ export default function Home() {
     if (next.playing === false || next.sound === false) audio.current?.mute();
   };
   const chooseCamera = (name: string) => {
+    if (name === 'gears' && linkedRef.current && state.current.mode === 'solid')
+      patch({ mode: 'cutaway' });
     setCamera(name);
     scene.current?.camera(name);
   };
@@ -106,13 +116,21 @@ export default function Home() {
           const s = state.current,
             previous = s.angle;
           if (s.playing && !document.hidden) {
-            const advanced = advanceRPM(s.rpm, s.targetRpm, dt);
-            s.rpm = advanced.rpm;
-            s.angle += s.realtime
-              ? advanced.degrees
-              : s.rate > 0
-                ? advanced.degrees * s.rate
-                : Math.min(30, s.rpm) * 6 * dt;
+            if (linkedRef.current) {
+              const pt = powertrain.advance(
+                dt * (s.realtime ? 1 : s.rate > 0 ? s.rate : 0.02),
+              );
+              s.rpm = pt.rpm;
+              s.angle = pt.angle;
+            } else {
+              const advanced = advanceRPM(s.rpm, s.targetRpm, dt);
+              s.rpm = advanced.rpm;
+              s.angle += s.realtime
+                ? advanced.degrees
+                : s.rate > 0
+                  ? advanced.degrees * s.rate
+                  : Math.min(30, s.rpm) * 6 * dt;
+            }
             const events = firingEvents(previous, s.angle);
             totalEvents += events.length;
             if (s.sound)
@@ -125,9 +143,10 @@ export default function Home() {
                     ? ((e.angle - previous) / (s.angle - previous)) *
                         Math.min(dt, 0.1)
                     : 0,
+                  linkedRef.current ? powertrain.state.throttle : 1,
                 );
           }
-          view.update(s);
+          view.update(s, linkedRef.current ? powertrain.state : undefined);
           frames++;
           if (now - fpsStart > 1000) {
             setFps(Math.round((frames * 1000) / (now - fpsStart)));
@@ -167,7 +186,7 @@ export default function Home() {
       void audio.current?.dispose();
       document.removeEventListener('visibilitychange', visibility);
     };
-  }, [attempt]);
+  }, [attempt, powertrain]);
   useEffect(() => {
     if (showInfo) infoDialog.current?.showModal();
     else infoDialog.current?.close();
@@ -184,6 +203,49 @@ export default function Home() {
     if (!context?.registerTool) return;
     const lifecycle = new AbortController();
     const tools = [
+      {
+        name: 'read_powertrain_state',
+        description: '读取动力系统状态，单位 rpm、m/s、Nm、秒。',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: true },
+        execute: () => ({
+          linked: linkedRef.current,
+          input: { ...powertrain.input },
+          state: structuredClone(powertrain.state),
+        }),
+      },
+      {
+        name: 'configure_powertrain',
+        description: '联动模式写入油门、刹车、N/R/D/S/M及相邻手动换挡。',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            throttle: { type: 'number', minimum: 0, maximum: 1 },
+            brake: { type: 'number', minimum: 0, maximum: 1 },
+            mode: { type: 'string', enum: ['N', 'R', 'D', 'S', 'M'] },
+            shift: { type: 'number', enum: [-1, 1] },
+          },
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: false },
+        execute: (input: unknown) => {
+          if (!linkedRef.current)
+            throw new Error('模式冲突：请先切换至动力系统联动');
+          if (!input || typeof input !== 'object' || Array.isArray(input))
+            throw new Error('输入须为对象');
+          const { shift, ...driver } = input as Record<string, unknown>;
+          if (shift !== undefined && shift !== 1 && shift !== -1)
+            throw new Error('shift 须为 +1 或 -1');
+          const ok = powertrain.configure(driver);
+          if (ok && shift !== undefined)
+            powertrain.requestShift(shift as number);
+          return structuredClone(powertrain.state);
+        },
+      },
       {
         name: 'read_engine_state',
         description: '读取发动机当前转速、曲轴角、观察模式和五缸阶段。',
@@ -248,6 +310,11 @@ export default function Home() {
               !['solid', 'cutaway', 'mechanism'].includes(v.mode))
           )
             throw new Error('未知模式');
+          if (
+            linkedRef.current &&
+            (v.rpm !== undefined || v.angle !== undefined)
+          )
+            throw new Error('模式冲突：联动模式下转速和曲轴角由动力系统求解');
           const next: Partial<SimulationState> = {};
           if (v.rpm !== undefined) next.targetRpm = v.rpm as number;
           if (v.angle !== undefined) {
@@ -275,7 +342,7 @@ export default function Home() {
         /* Browser may not support proposed API */
       }
     return () => lifecycle.abort();
-  }, []);
+  }, [powertrain]);
   function chooseMode(mode: ViewMode) {
     patch({ mode });
     chooseCamera(mode === 'solid' ? 'iso' : 'section');
@@ -292,7 +359,21 @@ export default function Home() {
       setNotice('声音未能启用，请再次点击声音按钮。');
     }
   }
+  function toggleLinked() {
+    const next = !linkedRef.current;
+    linkedRef.current = next;
+    setLinked(next);
+    if (next) {
+      patch({ rpm: powertrain.state.rpm, angle: powertrain.state.angle });
+      chooseCamera('gears');
+    } else
+      patch({ targetRpm: Math.max(800, Math.min(7000, state.current.rpm)) });
+  }
   function seek(angle: number) {
+    if (linkedRef.current) {
+      setNotice('联动模式请使用时间单步，曲轴角由统一时钟驱动');
+      return;
+    }
     patch({ angle, playing: false });
     setNotice('');
   }
@@ -310,7 +391,9 @@ export default function Home() {
       ? ui.rpm
       : ui.rate > 0
         ? ui.rpm * ui.rate
-        : 30
+        : linked
+          ? ui.rpm * 0.02
+          : 30
     : 0;
   return (
     <main>
@@ -325,6 +408,9 @@ export default function Home() {
           </div>
         </div>
         <div className="header-right">
+          <button aria-pressed={linked} onClick={toggleLinked}>
+            {linked ? '发动机独立观察' : '动力系统联动'}
+          </button>
           <span className="header-note">2021 RS 3 · EA855 EVO</span>
           <button className="text-button" onClick={() => setShowInfo(true)}>
             <Info size={16} />
@@ -332,7 +418,7 @@ export default function Home() {
           </button>
         </div>
       </header>
-      <section className="workspace">
+      <section className={linked ? 'workspace linked' : 'workspace'}>
         <div className="stage">
           <div className="stage-heading">
             <p>AUDI SPORT / 2.5 TFSI</p>
@@ -464,7 +550,7 @@ export default function Home() {
             </button>
           </div>
         </div>
-        <aside>
+        <aside className="engine-aside" hidden={linked}>
           <div className="aside-title">
             <span className="eyebrow">THE INLINE FIVE</span>
             <span className="engine-badge">2.5 TFSI</span>
@@ -619,6 +705,25 @@ export default function Home() {
             尺寸、来源与模型精度 <MoveUpRight size={14} />
           </button>
         </aside>
+        {linked && (
+          <PowertrainPanel
+            clock={{
+              playing: ui.playing,
+              rate: ui.realtime ? 1 : ui.rate || 0.02,
+              togglePlay,
+              setRate: (rate) => patch({ realtime: rate === 1, rate }),
+            }}
+            model={powertrain}
+            linked={linked}
+            refresh={() => setUI({ ...state.current })}
+            toggle={toggleLinked}
+            step={() => {
+              patch({ playing: false });
+              const pt = powertrain.advance(1 / 60);
+              patch({ rpm: pt.rpm, angle: pt.angle });
+            }}
+          />
+        )}
       </section>
       <section className="controls" aria-label="模拟控制">
         <div className="transport-row">
@@ -639,8 +744,13 @@ export default function Home() {
               aria-label="停止并复位"
               title="停止并复位"
               onClick={() => {
-                seek(0);
-                patch({ rpm: 800 });
+                if (linkedRef.current) {
+                  powertrain.reset();
+                  patch({ playing: false, angle: 0, rpm: 800 });
+                } else {
+                  seek(0);
+                  patch({ rpm: 800 });
+                }
               }}
             >
               <Square size={16} />
@@ -648,11 +758,13 @@ export default function Home() {
             <button
               aria-label="前进1度"
               title="前进1°"
+              disabled={linked}
               onClick={() => seek(state.current.angle + 1)}
             >
               +1°
             </button>
             <button
+              disabled={linked}
               aria-label="下一次点火"
               title="下一次点火"
               onClick={() =>
@@ -670,18 +782,20 @@ export default function Home() {
               </strong>
             </div>
             <input
+              disabled={linked}
               id="rpm"
               aria-label="工况转速"
               type="range"
               min="800"
               max="7000"
               step="50"
-              value={ui.targetRpm}
+              value={linked ? ui.rpm : ui.targetRpm}
               onInput={(e) => patch({ targetRpm: +e.currentTarget.value })}
             />
             <div className="rpm-presets">
               {[800, 2000, 4000, 7000].map((r) => (
                 <button
+                  disabled={linked}
                   key={r}
                   className={ui.targetRpm === r ? 'selected' : ''}
                   onClick={() => patch({ targetRpm: r })}
@@ -716,7 +830,9 @@ export default function Home() {
                     value={ui.rate}
                     onChange={(e) => patch({ rate: +e.target.value })}
                   >
-                    <option value="0">自动慢放 · 30 rpm</option>
+                    <option value="0">
+                      {linked ? '整套慢放 · 0.02×' : '自动慢放 · 30 rpm'}
+                    </option>
                     <option value="0.01">0.01×</option>
                     <option value="0.05">0.05×</option>
                     <option value="0.1">0.1×</option>
@@ -724,7 +840,9 @@ export default function Home() {
                   <span>
                     {ui.rate > 0
                       ? ui.rate.toFixed(2)
-                      : (30 / ui.rpm).toFixed(3)}
+                      : linked
+                        ? '0.02'
+                        : (30 / ui.rpm).toFixed(3)}
                     ×
                   </span>
                 </>
@@ -809,6 +927,7 @@ export default function Home() {
             max="720"
             step="1"
             value={angle}
+            disabled={linked}
             onInput={(e) => seek(+e.currentTarget.value)}
           />
         </div>
@@ -863,6 +982,13 @@ export default function Home() {
             144 mm 连杆中心距、8 mm
             气门升程、附件及铸件外形。固定配气曲线不包含原厂 AVS/VVT
             标定、气门重叠或点火提前。
+          </dd>
+          <dt>双离合动力系统</dt>
+          <dd>
+            DQ500
+            系列照片参考：钟形壳、加强筋、机电单元盖、油冷器、差速器及输出法兰。
+            壳体、齿形和片数为教学近似。七挡 / 倒挡采用同代后期齿比；K1/K2
+            交接、预选及车辆负载由固定步长求解器驱动。换挡时序并非原厂标定。
           </dd>
           <dt>转速与视听</dt>
           <dd>

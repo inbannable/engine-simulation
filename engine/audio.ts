@@ -20,7 +20,7 @@ export class EngineAudio {
     }
     await this.context.resume();
   }
-  fire(cylinder: number, rpm: number, teaching: boolean, delay = 0) {
+  fire(cylinder: number, rpm: number, teaching: boolean, delay = 0, load = 1) {
     const ctx = this.context;
     if (!ctx || ctx.state !== 'running' || !this.output) return;
     const o = ctx.createOscillator(),
@@ -36,7 +36,7 @@ export class EngineAudio {
       t + 0.05,
     );
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(teaching ? 0.18 : 0.25, t + 0.001);
+    g.gain.linearRampToValueAtTime((teaching ? 0.18 : 0.25) * (.3 + .7 * load), t + 0.001);
     g.gain.exponentialRampToValueAtTime(0.0001, t + (teaching ? 0.1 : 0.065));
     o.connect(g);
     g.connect(this.output);

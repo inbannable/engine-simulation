@@ -23,6 +23,11 @@ void test('export contains all named animation anchors and separate shells', () 
     'Crankshaft',
     'IntakeCam',
     'ExhaustCam',
+    'EngineDetail',
+    'Transmission',
+    'TransmissionHousing',
+    'TransmissionFittings',
+    'TransmissionOutputs',
   ])
     assert.ok(names.has(name), name);
   for (let i = 1; i <= 5; i++) {
