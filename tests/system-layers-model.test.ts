@@ -4,9 +4,29 @@ import { readFileSync } from 'node:fs';
 const bytes = readFileSync(
   new URL('../public/models/rs3-ea855-evo.glb', import.meta.url),
 );
-const g = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)));
+interface GlbNode {
+  name: string;
+  children: number[];
+  mesh: number;
+  translation: number[];
+  rotation?: number[];
+  scale?: number[];
+  extras: {
+    role?: string;
+    path?: string;
+    order: number;
+    ptMotion?: string;
+    axis?: number[];
+  };
+}
+const g: {
+  nodes: GlbNode[];
+  animations?: unknown;
+  meshes: { primitives: { attributes: { POSITION: number } }[] }[];
+  accessors: { min: number[]; max: number[] }[];
+} = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)));
 const get = (name: string) => {
-  const n = g.nodes.find((n: any) => n.name === name);
+  const n = g.nodes.find((n: GlbNode) => n.name === name);
   assert.ok(n, name);
   return n;
 };
@@ -45,15 +65,15 @@ void test('system hierarchy and all 26 ordered canonical paths', () => {
       'hydraulic_return',
     ],
   };
-  const anchors = g.nodes.filter((n: any) => n.extras?.role === 'anchor');
+  const anchors = g.nodes.filter((n: GlbNode) => n.extras?.role === 'anchor');
   assert.equal(anchors.length, 167);
   for (const [domain, paths] of Object.entries(domains))
     for (const path of paths) {
       const nodes = anchors
-        .filter((n: any) => n.extras.path === path)
-        .sort((a: any, b: any) => a.extras.order - b.extras.order);
+        .filter((n: GlbNode) => n.extras.path === path)
+        .sort((a: GlbNode, b: GlbNode) => a.extras.order - b.extras.order);
       assert.ok(nodes.length >= 2, path);
-      nodes.forEach((n: any, i: number) => {
+      nodes.forEach((n: GlbNode, i: number) => {
         assert.deepEqual(n.extras, {
           system: domain,
           path,
@@ -69,7 +89,10 @@ void test('system hierarchy and all 26 ordered canonical paths', () => {
       });
       get('SYS_ROUTE_' + path);
     }
-  assert.equal(new Set(g.nodes.map((n: any) => n.name)).size, g.nodes.length);
+  assert.equal(
+    new Set(g.nodes.map((n: GlbNode) => n.name)).size,
+    g.nodes.length,
+  );
 });
 void test('rotor local origins, axes and motion metadata remain explicit', () => {
   for (const [name, motion, xyz, axis] of [

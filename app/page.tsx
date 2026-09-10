@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Pause,
   Play,
@@ -26,14 +26,30 @@ import {
   OFFSETS,
   evaluateEngine,
   mod,
-  advanceRPM,
   firingEvents,
   type SimulationState,
   type ViewMode,
 } from '../engine/physics';
-import { Powertrain } from '../engine/powertrain';
+import { ExhibitRuntime } from '../engine/exhibit/ExhibitRuntime';
+import { LayeredEngineAudio } from '../engine/exhibit/LayeredEngineAudio';
+import {
+  OBSERVATION_LAYERS,
+  type ObservationLayer,
+  type CylinderPressureSample,
+} from '../engine/exhibit/types';
+import {
+  EXHIBIT_SCENARIOS,
+  type ExhibitScenarioId,
+} from '../engine/exhibit/ScenarioController';
+import {
+  ObservationLayerSelector,
+  ScenarioStrip,
+  ExhibitStatusPanel,
+  CylinderPressureChart,
+  ExhibitCueBar,
+  ColdStartOverlay,
+} from './exhibit';
 import { PowertrainPanel } from './PowertrainPanel';
-import { EngineAudio } from '../engine/audio';
 import type { SceneHandle } from '../engine/scene';
 const MODES = [
   ['solid', '实物'],
@@ -52,14 +68,21 @@ const CAMERA_OPTIONS = [
   ['section', '五缸剖面'],
 ];
 export default function Home() {
-  const [powertrain] = useState(() => new Powertrain());
+  const [runtime] = useState(() => new ExhibitRuntime());
+  const powertrain = runtime.powertrain;
+  const [pressureSamples, setPressureSamples] = useState<
+    CylinderPressureSample[]
+  >([]);
+  const [directive, setDirective] = useState(() =>
+    runtime.scenarios.snapshot(),
+  );
   const linkedRef = useRef(false);
   const [linked, setLinked] = useState(false);
   const infoDialog = useRef<HTMLDialogElement>(null);
   const canvas = useRef<HTMLDivElement>(null),
     scene = useRef<SceneHandle | null>(null),
     state = useRef<SimulationState>({ ...INITIAL }),
-    audio = useRef<EngineAudio | null>(null);
+    audio = useRef<LayeredEngineAudio | null>(null);
   const [ui, setUI] = useState({ ...INITIAL }),
     [loaded, setLoaded] = useState(false),
     [progress, setProgress] = useState(0),
@@ -70,17 +93,50 @@ export default function Home() {
     [fps, setFps] = useState(0),
     [notice, setNotice] = useState(''),
     [counts, setCounts] = useState({ events: 0, calls: 0, triangles: 0 });
-  const patch = (next: Partial<SimulationState>) => {
-    Object.assign(state.current, next);
-    setUI({ ...state.current });
-    if (next.playing === false || next.sound === false) audio.current?.mute();
-  };
-  const chooseCamera = (name: string) => {
-    if (name === 'gears' && linkedRef.current && state.current.mode === 'solid')
-      patch({ mode: 'cutaway' });
-    setCamera(name);
-    scene.current?.camera(name);
-  };
+  const patch = useCallback(
+    (next: Partial<SimulationState>) => {
+      runtime.scenarios.parameterChanged();
+      if (next.targetRpm !== undefined)
+        runtime.bench.configure({
+          ignition: true,
+          starter: true,
+          throttle: 0,
+          governorEnabled: true,
+        });
+      if (next.angle !== undefined && !linkedRef.current)
+        runtime.bench.setCrankAngle(next.angle);
+      Object.assign(state.current, next);
+      setUI({ ...state.current });
+      if (next.playing === false || next.sound === false) audio.current?.mute();
+    },
+    [runtime],
+  );
+  const chooseCamera = useCallback(
+    (name: string) => {
+      runtime.scenarios.parameterChanged();
+      if (
+        name === 'gears' &&
+        linkedRef.current &&
+        state.current.mode === 'solid'
+      )
+        patch({ mode: 'cutaway' });
+      setCamera(name);
+      scene.current?.camera(name);
+    },
+    [patch, runtime],
+  );
+  const startScenario = useCallback(
+    (id: ExhibitScenarioId) => {
+      const d = runtime.start(id, state.current);
+      linkedRef.current = runtime.linked;
+      setLinked(runtime.linked);
+      setDirective(d);
+      setUI({ ...state.current });
+      setPressureSamples([]);
+      return d;
+    },
+    [runtime],
+  );
   useEffect(() => {
     const controller = new AbortController();
     let raf = 0,
@@ -88,9 +144,13 @@ export default function Home() {
       lastUI = 0,
       fpsStart = 0,
       frames = 0,
-      totalEvents = 0;
+      totalEvents = 0,
+      lastCue = '',
+      nextDraw = 0;
     let mounted = true;
-    audio.current = new EngineAudio();
+    audio.current = new LayeredEngineAudio();
+    runtime.scenarios.setReducedMotion(window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    runtime.start('cold-start', state.current);
     import('../engine/scene')
       .then(async (m) => {
         if (!canvas.current || !mounted) return;
@@ -101,6 +161,8 @@ export default function Home() {
             if (mounted) setProgress(n);
           },
           controller.signal,
+          () => runtime.scenarios.modelRotated(),
+          (message) => { setError(message); patch({ playing: false }); },
         );
         if (!mounted) {
           view.dispose();
@@ -111,42 +173,45 @@ export default function Home() {
         setLoaded(true);
         const loop = (now: number) => {
           if (!mounted) return;
+          const interval = window.innerWidth < 720 ? 1000 / 30 : 1000 / 60;
+          if (now < nextDraw - 0.5) {
+            raf = requestAnimationFrame(loop);
+            return;
+          }
+          nextDraw = Math.max(now, nextDraw + interval);
           const dt = last ? (now - last) / 1000 : 0;
           last = now;
           const s = state.current,
             previous = s.angle;
           if (s.playing && !document.hidden) {
-            if (linkedRef.current) {
-              const pt = powertrain.advance(
-                dt * (s.realtime ? 1 : s.rate > 0 ? s.rate : 0.02),
-              );
-              s.rpm = pt.rpm;
-              s.angle = pt.angle;
-            } else {
-              const advanced = advanceRPM(s.rpm, s.targetRpm, dt);
-              s.rpm = advanced.rpm;
-              s.angle += s.realtime
-                ? advanced.degrees
-                : s.rate > 0
-                  ? advanced.degrees * s.rate
-                  : Math.min(30, s.rpm) * 6 * dt;
+            runtime.advance(
+              dt *
+                (s.realtime
+                  ? 1
+                  : s.rate > 0
+                    ? s.rate
+                    : 30 / Math.max(30, s.rpm)),
+              dt,
+              s,
+            );
+            if (linkedRef.current !== runtime.linked) {
+              linkedRef.current = runtime.linked;
+              setLinked(runtime.linked);
             }
-            const events = firingEvents(previous, s.angle);
-            totalEvents += events.length;
-            if (s.sound)
-              for (const e of events)
-                audio.current?.fire(
-                  e.cylinder,
-                  s.rpm,
-                  !s.realtime,
-                  dt > 0
-                    ? ((e.angle - previous) / (s.angle - previous)) *
-                        Math.min(dt, 0.1)
-                    : 0,
-                  linkedRef.current ? powertrain.state.throttle : 1,
-                );
+            totalEvents += firingEvents(previous, s.angle).length;
           }
-          view.update(s, linkedRef.current ? powertrain.state : undefined);
+          const frame = runtime.frame(s);
+          const cue = runtime.scenarios.snapshot().cue;
+          if (cue?.active && cue.camera && cue.id !== lastCue) {
+            view.camera(cue.camera);
+            lastCue = cue.id;
+          }
+          view.update(frame);
+          audio.current?.setCameraPosition(...view.cameraPosition());
+          if (s.sound && s.playing && !document.hidden) {
+            audio.current?.unmute();
+            audio.current?.update(frame);
+          } else audio.current?.mute();
           frames++;
           if (now - fpsStart > 1000) {
             setFps(Math.round((frames * 1000) / (now - fpsStart)));
@@ -156,6 +221,8 @@ export default function Home() {
           }
           if (now - lastUI > 90) {
             setUI({ ...s });
+            setDirective(runtime.scenarios.snapshot());
+            setPressureSamples(runtime.bench.systems.pressureTrace());
             lastUI = now;
           }
           raf = requestAnimationFrame(loop);
@@ -186,7 +253,7 @@ export default function Home() {
       void audio.current?.dispose();
       document.removeEventListener('visibilitychange', visibility);
     };
-  }, [attempt, powertrain]);
+  }, [attempt, powertrain, runtime, patch]);
   useEffect(() => {
     if (showInfo) infoDialog.current?.showModal();
     else infoDialog.current?.close();
@@ -204,6 +271,28 @@ export default function Home() {
     const lifecycle = new AbortController();
     const tools = [
       {
+        name: 'run_exhibit_scenario',
+        description: '运行九个发动机策展工况之一',
+        inputSchema: {
+          type: 'object',
+          properties: { scenario: { type: 'string', enum: EXHIBIT_SCENARIOS } },
+          required: ['scenario'],
+          additionalProperties: false,
+        },
+        annotations: { readOnlyHint: false },
+        execute: (input: unknown) => {
+          if (!input || typeof input !== 'object' || Array.isArray(input))
+            throw new Error('输入必须是对象');
+          const v = input as Record<string, unknown>;
+          if (
+            Object.keys(v).some((k) => k !== 'scenario') ||
+            !EXHIBIT_SCENARIOS.includes(v.scenario as ExhibitScenarioId)
+          )
+            throw new Error('未知工况');
+          return startScenario(v.scenario as ExhibitScenarioId);
+        },
+      },
+      {
         name: 'read_powertrain_state',
         description: '读取动力系统状态，单位 rpm、m/s、Nm、秒。',
         inputSchema: {
@@ -216,6 +305,7 @@ export default function Home() {
           linked: linkedRef.current,
           input: { ...powertrain.input },
           state: structuredClone(powertrain.state),
+          hydraulic: structuredClone(runtime.adapter.dct.state),
         }),
       },
       {
@@ -240,6 +330,7 @@ export default function Home() {
           const { shift, ...driver } = input as Record<string, unknown>;
           if (shift !== undefined && shift !== 1 && shift !== -1)
             throw new Error('shift 须为 +1 或 -1');
+          runtime.scenarios.parameterChanged();
           const ok = powertrain.configure(driver);
           if (ok && shift !== undefined)
             powertrain.requestShift(shift as number);
@@ -258,6 +349,10 @@ export default function Home() {
         execute: () => ({
           ...state.current,
           angle: mod(state.current.angle),
+          systems: structuredClone(runtime.bench.systems.state),
+          load: runtime.load,
+          layer: runtime.layer,
+          metrics: scene.current?.metrics(),
           cylinders: evaluateEngine(state.current.angle).map((c) => ({
             cylinder: c.cylinder,
             stage: STAGES[c.stage].name,
@@ -272,6 +367,8 @@ export default function Home() {
           type: 'object',
           properties: {
             rpm: { type: 'number', minimum: 800, maximum: 7000 },
+            load: { type: 'number', minimum: 0, maximum: 1 },
+            layer: { type: 'string', enum: OBSERVATION_LAYERS },
             angle: { type: 'number', minimum: 0, maximum: 720 },
             playing: { type: 'boolean' },
             mode: { type: 'string', enum: ['solid', 'cutaway', 'mechanism'] },
@@ -284,7 +381,9 @@ export default function Home() {
             throw new Error('输入必须是对象');
           const v = input as Record<string, unknown>;
           for (const k of Object.keys(v))
-            if (!['rpm', 'angle', 'playing', 'mode'].includes(k))
+            if (
+              !['rpm', 'angle', 'playing', 'mode', 'load', 'layer'].includes(k)
+            )
               throw new Error('未知字段');
           if (
             v.rpm !== undefined &&
@@ -315,6 +414,24 @@ export default function Home() {
             (v.rpm !== undefined || v.angle !== undefined)
           )
             throw new Error('模式冲突：联动模式下转速和曲轴角由动力系统求解');
+          if (
+            v.load !== undefined &&
+            (typeof v.load !== 'number' ||
+              !Number.isFinite(v.load) ||
+              v.load < 0 ||
+              v.load > 1)
+          )
+            throw new Error('台架负载须为0–1');
+          if (
+            v.layer !== undefined &&
+            !OBSERVATION_LAYERS.includes(v.layer as ObservationLayer)
+          )
+            throw new Error('未知观察层');
+          if (linkedRef.current && v.load !== undefined)
+            throw new Error('联动模式不能设置台架负载');
+          if (v.load !== undefined) runtime.load = v.load as number;
+          if (v.layer !== undefined)
+            runtime.layer = v.layer as ObservationLayer;
           const next: Partial<SimulationState> = {};
           if (v.rpm !== undefined) next.targetRpm = v.rpm as number;
           if (v.angle !== undefined) {
@@ -329,7 +446,12 @@ export default function Home() {
           await new Promise<void>((resolve) =>
             requestAnimationFrame(() => resolve()),
           );
-          return { ...state.current, angle: mod(state.current.angle) };
+          return {
+            ...state.current,
+            angle: mod(state.current.angle),
+            load: runtime.load,
+            layer: runtime.layer,
+          };
         },
       },
     ];
@@ -342,7 +464,7 @@ export default function Home() {
         /* Browser may not support proposed API */
       }
     return () => lifecycle.abort();
-  }, [powertrain]);
+  }, [powertrain, runtime, startScenario, chooseCamera, patch]);
   function chooseMode(mode: ViewMode) {
     patch({ mode });
     chooseCamera(mode === 'solid' ? 'iso' : 'section');
@@ -353,7 +475,11 @@ export default function Home() {
       return;
     }
     try {
-      await audio.current?.enable();
+      const enabled = await audio.current?.enableFromUserGesture();
+      if (!enabled) {
+        setNotice('声音未能启用，请再次点击声音按钮。');
+        return;
+      }
       patch({ sound: true });
     } catch {
       setNotice('声音未能启用，请再次点击声音按钮。');
@@ -361,6 +487,8 @@ export default function Home() {
   }
   function toggleLinked() {
     const next = !linkedRef.current;
+    runtime.scenarios.parameterChanged();
+    runtime.setLinked(next);
     linkedRef.current = next;
     setLinked(next);
     if (next) {
@@ -432,6 +560,13 @@ export default function Home() {
             </span>
           </div>
           <div className="canvas" ref={canvas} />
+          <ColdStartOverlay
+            directive={directive}
+            onSkip={() => {
+              setDirective(runtime.scenarios.skip());
+            }}
+          />
+
           {(!loaded || error) && (
             <div className="loading-overlay">
               <div>
@@ -715,15 +850,57 @@ export default function Home() {
             }}
             model={powertrain}
             linked={linked}
-            refresh={() => setUI({ ...state.current })}
+            refresh={() => {
+              runtime.scenarios.parameterChanged();
+              setUI({ ...state.current });
+            }}
             toggle={toggleLinked}
             step={() => {
               patch({ playing: false });
-              const pt = powertrain.advance(1 / 60);
-              patch({ rpm: pt.rpm, angle: pt.angle });
+              runtime.advance(1 / 60, 1 / 60, state.current);
+              setUI({ ...state.current });
             }}
           />
         )}
+      </section>
+      <section className="exhibit-controls" aria-label="系统观察与策展">
+        <ObservationLayerSelector
+          value={runtime.layer}
+          onChange={(layer) => {
+            runtime.setLayer(layer);
+            patch({});
+          }}
+        />
+        <ScenarioStrip
+          value={directive.scenario}
+          running={directive.active}
+          onSelect={startScenario}
+        />
+        <ExhibitCueBar directive={directive} />
+        <label className="bench-load">
+          台架负载 {Math.round(runtime.load * 100)}%
+          <input
+            aria-label="台架负载"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={runtime.load}
+            disabled={linked}
+            onChange={(e) => {
+              runtime.setLoad(Number(e.target.value));
+              patch({});
+            }}
+          />
+        </label>
+        <div className="exhibit-data">
+          <ExhibitStatusPanel
+            frame={runtime.frame(ui)}
+            audioStatus={ui.sound ? 'running' : 'off'}
+            onEnableAudio={toggleAudio}
+          />
+          <CylinderPressureChart samples={pressureSamples} selectedCylinder={ui.selected} />
+        </div>
       </section>
       <section className="controls" aria-label="模拟控制">
         <div className="transport-row">
@@ -744,13 +921,8 @@ export default function Home() {
               aria-label="停止并复位"
               title="停止并复位"
               onClick={() => {
-                if (linkedRef.current) {
-                  powertrain.reset();
-                  patch({ playing: false, angle: 0, rpm: 800 });
-                } else {
-                  seek(0);
-                  patch({ rpm: 800 });
-                }
+                runtime.reset(state.current);
+                patch({ playing: false, rpm: 800, targetRpm: 800, angle: 0 });
               }}
             >
               <Square size={16} />
@@ -993,8 +1165,8 @@ export default function Home() {
           <dt>转速与视听</dt>
           <dd>
             800 rpm 为演示怠速，7,000 rpm
-            为演示上限。合成声音、气流与振动为示意，不计算真实缸压、温度、涡轮响应或
-            ECU 控制。
+            为演示上限。合成声音、气流与振动为示意。缸压、温度和涡轮响应采用教学模型，不是原厂
+            ECU 标定、CFD 或热力学认证。
           </dd>
         </dl>
         <div className="reference-links">

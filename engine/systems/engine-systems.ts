@@ -131,6 +131,24 @@ export class EngineSystems {
     return this.state;
   }
 
+  /** Quasi-steady pressure trace at current charge/heat conditions, never a time rewind. */
+  pressureTrace() {
+    const angle = this.state.angle,
+      cylinders = this.state.cylinders;
+    try {
+      return Array.from({ length: 145 }, (_, i) => {
+        this.setCrankAngle(i * 5);
+        return {
+          angleDeg: i * 5,
+          pressuresBar: this.state.cylinders.map((c) => c.pressureBar),
+        };
+      });
+    } finally {
+      this.state.angle = angle;
+      this.state.cylinders = cylinders;
+    }
+  }
+
   /** Changes only the 720-degree phase; time, gas-path inertia and heat are untouched. */
   setCrankAngle(angleDeg: number) {
     if (!Number.isFinite(angleDeg)) throw new Error('angle must be finite');

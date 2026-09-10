@@ -14,6 +14,8 @@ export type {
   EngineSystemsSpec,
 } from './spec';
 export type {
+  EngineFrame,
+  ExhibitCue,
   CylinderProcessState,
   DctHydraulicInput,
   DctHydraulicState,

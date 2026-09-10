@@ -1,11 +1,4 @@
-import type { PowertrainState } from '../powertrain';
-import type { SimulationState } from '../physics';
-import type {
-  CylinderProcessState,
-  DctHydraulicState,
-  EngineSystemsState,
-  ObservationLayer,
-} from '../systems/types';
+import type { CylinderProcessState, ObservationLayer } from '../systems/types';
 
 export type {
   CylinderProcessState,
@@ -24,23 +17,7 @@ export const OBSERVATION_LAYERS = [
   'transmission-hydraulic',
 ] as const satisfies readonly ObservationLayer[];
 
-export interface ExhibitCue {
-  id: string;
-  label: string;
-  focus: 'engine' | 'intake' | 'exhaust' | 'turbo' | 'clutch' | 'gears';
-  camera?: string;
-  slowMotion?: number;
-  active: boolean;
-}
-
-export interface EngineFrame {
-  simulation: SimulationState;
-  systems: EngineSystemsState;
-  powertrain?: PowertrainState;
-  hydraulic?: DctHydraulicState;
-  layer: ObservationLayer;
-  cue?: ExhibitCue;
-}
+export type { EngineFrame, ExhibitCue } from '../systems/types';
 
 export interface CylinderPressureSample {
   angleDeg: number;

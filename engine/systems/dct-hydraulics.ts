@@ -154,7 +154,7 @@ export class DctHydraulics {
       0,
     );
     const availablePressure =
-      p.maxLinePressureBar * smoothstep(s.pumpRpm / 2200) * input.pumpCommand;
+      p.maxLinePressureBar * smoothstep(s.pumpRpm / 550) * input.pumpCommand;
     s.linePressureBar = finiteClamp(
       approach(s.linePressureBar, availablePressure, dt, 0.045),
       0,

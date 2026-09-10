@@ -13,7 +13,24 @@ export class PowertrainSystemsAdapter {
     public readonly dct = new DctHydraulics(),
   ) {}
 
-  advance(powertrain: Readonly<PowertrainState>, seconds: number) {
+  step(
+    powertrain: Readonly<PowertrainState>,
+    commands: [number, number],
+    seconds: number,
+  ) {
+    this.advance(powertrain, seconds, commands);
+    this.engine.setCrankAngle(powertrain.angle);
+    return {
+      torque: this.engine.state.averageNetTorqueNm,
+      engagement: this.dct.state.clutchEngagement,
+    };
+  }
+
+  advance(
+    powertrain: Readonly<PowertrainState>,
+    seconds: number,
+    commands?: [number, number],
+  ) {
     const torqueCapacity = Math.max(
       1,
       calibratedFullLoadTorqueNm(Math.max(800, powertrain.rpm)),
@@ -27,7 +44,7 @@ export class PowertrainSystemsAdapter {
     this.dct.configure({
       engineRpm: Math.max(0, powertrain.rpm),
       pumpCommand: powertrain.rpm > 100 ? 1 : 0,
-      valveCommands: [
+      valveCommands: commands ?? [
         powertrain.clutches[0].engagement,
         powertrain.clutches[1].engagement,
       ],

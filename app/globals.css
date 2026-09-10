@@ -1731,3 +1731,53 @@ input:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.exhibit-controls {
+  position: relative;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid #303945;
+  background: #141a21;
+  border-radius: 8px;
+  min-width: 0;
+}
+.exhibit-data {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  min-width: 0;
+}
+.exhibit-data > * {
+  min-width: 0;
+}
+.bench-load {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  font-size: 14px;
+}
+@media (max-width: 720px) {
+  .exhibit-data {
+    grid-template-columns: 1fr;
+  }
+  .exhibit-controls {
+    padding: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .exhibit-controls {
+    order: 2;
+  }
+  .controls {
+    order: 3;
+  }
+  .workspace > .powertrain-panel,
+  .engine-aside {
+    order: 4;
+  }
+  footer {
+    order: 5;
+  }
+}

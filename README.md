@@ -11,7 +11,9 @@ npm ci
 npm run dev
 ```
 
-打开开发服务器输出的本地地址（默认 http://localhost:3000）。运行网页不需要 Blender；GLB 已随项目交付。首次加载约 11.4 MB 模型，之后从本地服务加载。无账号、数据库、外部模型 CDN 或遥测服务。未发布托管站点。
+打开开发服务器输出的本地地址（默认 http://localhost:3000）。运行网页不需要 Blender；GLB 已随项目交付，大小 13.29 MB。模拟在浏览器本地运行，无应用账号、数据库、外部模型 CDN 或遥测。Sites 发布仅限所有者访问。
+
+集成版本默认播放可跳过的冷启动，提供五个观察层、九个策展工况、实时缸压曲线、台架负载和液压双离合联动。完整验收及未覆盖项见 [集成 QA](docs/INTEGRATION-QA.md)，该文档优先于历史验收记录。
 
 生产构建：
 
@@ -38,7 +40,7 @@ npm start
 
 - `models/rs3-ea855-evo.blend`：可编辑 Blender 4.5 LTS 工程，毫米单位，Y向上。
 - `public/models/rs3-ea855-evo.glb`：网页使用的分件 glTF 2.0 模型。
-- `scripts/rebuild_model.py`：顺序执行建模、外观细化、机械修正、几何优化、发动机附件及变速箱外观六个阶段（最后加入变速箱内部机构）。
+- `scripts/rebuild_model.py`：在临时目录执行完整程序化建模检查，再保留已交付 Blender 手工细化，以系统层重建作为最后阶段；通过验证后更新资产。最终几何以仓库 `.blend` 为准，不能仅靠早期脚本逐字节还原手工细化。
 - `scripts/detail_powertrain.py`：可重复运行的附件细化与静态变速箱外观建模。
 - `scripts/render_powertrain.py`：生成总成、变速箱、排气侧三张离线验收渲染。
 - `engine/powertrain.ts`：纯 TypeScript 固定步长动力系统、齿比配置及可序列化状态。

@@ -1,3 +1,4 @@
+import { readCadPaths } from './cad-paths';
 import * as THREE from 'three';
 import type {
   EngineCylinderState,
@@ -14,6 +15,8 @@ export interface SystemLayerRendererOptions {
   mobile?: boolean;
   particleLimit?: number;
   glow?: boolean;
+  /** Required by the production scene; fixture-only tests may omit CAD. */
+  cadPaths?: Map<string, THREE.Vector3[]>;
 }
 
 export interface SystemLayerRendererDiagnostics {
@@ -26,6 +29,7 @@ export interface SystemLayerRendererDiagnostics {
 }
 
 interface FlowRoute {
+  phase?: number;
   points: Float32Array;
   count: number;
   speed: number;
@@ -150,6 +154,7 @@ export class SystemLayerRenderer {
   private activeLayer: ObservationLayer | null = null;
   private activeParticles = 0;
   private disposed = false;
+  private previousTime = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -175,7 +180,9 @@ export class SystemLayerRenderer {
       { length: 5 },
       (_, index) => new THREE.Vector3((index - 2) * 88, 225, 0),
     );
-    this.routes = this.createRoutes();
+    this.routes = options.cadPaths
+      ? this.createCadRoutes(options.cadPaths)
+      : this.createRoutes();
     this.root.name = 'SystemLayerRenderer';
     this.particles.name = 'ExhibitDirectionalFlow';
     this.glows.name = 'ExhibitStateGlow';
@@ -193,11 +200,14 @@ export class SystemLayerRenderer {
     this.activeLayer = frame.layer;
     this.root.visible = frame.layer !== 'mechanical';
     if (frame.layer === 'mechanical') {
+      this.previousTime = frame.systems.time;
       this.activeParticles = 0;
       return;
     }
     const routes = this.routes[frame.layer];
     const time = frame.systems.time;
+    const elapsed = Math.max(0, time - this.previousTime);
+    this.previousTime = time;
     const density = clamp(
       frame.systems.cylinders.reduce(
         (sum, cylinder) => sum + cylinder.chargeMassMg,
@@ -226,6 +236,8 @@ export class SystemLayerRenderer {
           : 0.82;
     let instance = 0;
     for (const route of routes) {
+      if (frame.layer === 'thermal-cooling')
+        setThermalColor(route.color, frame.systems.coolantTempC);
       const routeDrive =
         route.signal === 'intake'
           ? route.cylinder === undefined
@@ -256,12 +268,16 @@ export class SystemLayerRenderer {
                       0.06,
                       1.25,
                     );
-      const visibleCount = Math.min(route.count, this.particleLimit - instance);
+      route.phase =
+        ((route.phase ?? 0) + elapsed * route.speed * (0.25 + routeDrive)) % 1;
+      const visibleCount = !frame.simulation.flow ? 0 : Math.min(
+        route.count,
+        Math.floor(this.particleLimit / routes.length),
+        this.particleLimit - instance,
+      );
       for (let index = 0; index < visibleCount; index++) {
         const staticPhase = index / Math.max(1, visibleCount);
-        const motion = this.reducedMotion
-          ? 0
-          : time * route.speed * (0.25 + routeDrive);
+        const motion = this.reducedMotion ? 0 : (route.phase ?? 0);
         const phase = (staticPhase + motion) % 1;
         this.sampleRoute(route.points, phase, this.position);
         const pulse = this.reducedMotion
@@ -340,6 +356,57 @@ export class SystemLayerRenderer {
       resolved[key] = value;
     }
     return resolved;
+  }
+
+  private createCadRoutes(paths: ReturnType<typeof readCadPaths>) {
+    const routes: Record<
+      Exclude<ObservationLayer, 'mechanical'>,
+      FlowRoute[]
+    > = {
+      'gas-combustion': [],
+      'thermal-cooling': [],
+      lubrication: [],
+      'transmission-hydraulic': [],
+    };
+    for (const [name, points] of paths) {
+      const layer = name.startsWith('oil')
+        ? 'lubrication'
+        : name.startsWith('coolant')
+          ? 'thermal-cooling'
+          : name.startsWith('hydraulic')
+            ? 'transmission-hydraulic'
+            : 'gas-combustion';
+      const signal: FlowRoute['signal'] = name.startsWith('oil')
+        ? 'oil'
+        : name.startsWith('coolant')
+          ? 'coolant'
+          : name.startsWith('hydraulic')
+            ? name === 'hydraulic_k2'
+              ? 'k2'
+              : 'k1'
+            : name.startsWith('exhaust')
+              ? 'exhaust'
+              : 'intake';
+      const cylinder = /cylinder_(\d)/.exec(name);
+      routes[layer].push({
+        points: new Float32Array(points.flatMap((p) => p.toArray())),
+        count: layer === 'gas-combustion' ? 10 : 16,
+        speed: 0.3,
+        color: new THREE.Color(
+          signal === 'oil'
+            ? 0xffc83d
+            : signal === 'exhaust'
+              ? 0xff6835
+              : signal === 'k1'
+                ? 0xff9b38
+                : 0x55bfff,
+        ),
+        intensity: 1,
+        signal,
+        cylinder: cylinder ? Number(cylinder[1]) - 1 : undefined,
+      });
+    }
+    return routes;
   }
 
   private createRoutes() {

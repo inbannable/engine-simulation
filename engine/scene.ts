@@ -1,17 +1,17 @@
-import * as T from 'three';
 import {
-  GEARS,
-  SYNC_GROUPS,
-  gearInfo,
-  type Gear,
-  type PowertrainState,
-} from './powertrain';
+  SystemLayerRenderer,
+  recommendedExhibitPixelRatio,
+} from './exhibit/SystemLayerRenderer';
+import { readCadPaths } from './exhibit/cad-paths';
+import type { EngineFrame } from './systems/types';
+import * as T from 'three';
+import { GEARS, SYNC_GROUPS, gearInfo, type Gear } from './powertrain';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { chainEnvelope } from './chain';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { evaluateEngine, STAGES, mod, type SimulationState } from './physics';
+import { evaluateEngine, STAGES, mod } from './physics';
 export const CAMERAS: Record<string, number[]> = {
   iso: [-950, 660, 1200],
   intake: [140, 360, 1550],
@@ -24,12 +24,14 @@ export const CAMERAS: Record<string, number[]> = {
   section: [-150, 270, 1000],
 };
 export interface SceneHandle {
-  update: (state: SimulationState, powertrain?: PowertrainState) => void;
+  update: (frame: EngineFrame) => void;
+  cameraPosition: () => [number, number, number];
   camera: (name: string) => void;
   dispose: () => void;
   metrics: () => { calls: number; triangles: number };
 }
 function mergeStaticChildren(parent: T.Object3D) {
+  if (parent.name === 'SystemLayers') return;
   for (const child of parent.children)
     if (!(child instanceof T.Mesh)) mergeStaticChildren(child);
   const batches = new Map<string, { material: T.Material; meshes: T.Mesh[] }>();
@@ -79,17 +81,26 @@ export async function createScene(
   onSelect: (n: number) => void,
   onProgress: (n: number) => void,
   signal: AbortSignal,
+  onRotate: () => void = () => {},
+  onError: (message: string) => void = () => {},
 ): Promise<SceneHandle> {
   const renderer = new T.WebGLRenderer({
     antialias: true,
     alpha: true,
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setPixelRatio(
+    recommendedExhibitPixelRatio(devicePixelRatio, window.innerWidth < 720),
+  );
   renderer.setClearColor(0, 0);
   renderer.toneMapping = T.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.93;
   el.appendChild(renderer.domElement);
+  const onContextLost = (event: Event) => {
+    event.preventDefault();
+    onError('WebGL 上下文丢失，请重新加载三维视图。');
+  };
+  renderer.domElement.addEventListener('webglcontextlost', onContextLost);
   renderer.domElement.setAttribute(
     'aria-label',
     '可旋转的 Audi RS3 发动机三维模型',
@@ -98,7 +109,10 @@ export async function createScene(
     camera = new T.PerspectiveCamera(35, 1, 1, 5000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 135, 0);
-  controls.enableDamping = true;
+  controls.enableDamping = !window.matchMedia(
+    '(prefers-reduced-motion: reduce)',
+  ).matches;
+  controls.addEventListener('start', onRotate);
   controls.minDistance = 450;
   controls.maxDistance = 2800;
   controls.maxPolarAngle = Math.PI * 0.91;
@@ -177,6 +191,7 @@ export async function createScene(
     if (dead) return;
     dead = true;
     ro.disconnect();
+    renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
     controls.dispose();
     env.dispose();
     scene.traverse((o) => {
@@ -245,7 +260,19 @@ export async function createScene(
     throw error;
   }
   const nodes = new Map<string, T.Object3D>();
-  model.traverse((o) => nodes.set(o.name, o));
+  model.traverse((o) => {
+    if (nodes.has(o.name)) throw new Error('模型节点重复：' + o.name);
+    nodes.set(o.name, o);
+  });
+  let systemLayers: SystemLayerRenderer;
+  try {
+    systemLayers = new SystemLayerRenderer(scene, nodes, {
+      cadPaths: readCadPaths(nodes.values()),
+    });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
   const node = (name: string) => nodes.get(name);
   const setVisible = (name: string, value: boolean) => {
     const o = node(name);
@@ -476,7 +503,10 @@ export async function createScene(
       }
     });
   });
-  const update = (state: SimulationState, powertrain?: PowertrainState) => {
+  let previousSystemsTime = 0;
+  const rotorPhases = new Map<string, number>();
+  const update = (frame: EngineFrame) => {
+    const { simulation: state, powertrain } = frame;
     if (dead) return;
     const cs = evaluateEngine(state.angle),
       a = (state.angle * Math.PI) / 180;
@@ -649,8 +679,8 @@ export async function createScene(
       g.position.set(c.x, c.pistonY + 27 + height / 2, 0);
       g.scale.y = height;
       (g.material as T.MeshBasicMaterial).color.set(STAGES[c.stage].color);
-      (g.material as T.MeshBasicMaterial).opacity = c.firing ? 0.62 : 0.2;
-      g.visible = !solid;
+      (g.material as T.MeshBasicMaterial).opacity = 0.2 + 0.42 * (frame.systems.cylinders[c.cylinder - 1]?.burnFraction ?? 0);
+      g.visible = !solid && frame.layer === 'gas-combustion';
       const label = labels[c.cylinder - 1];
       label.visible = !solid;
       label.material.color.set(
@@ -665,6 +695,9 @@ export async function createScene(
           exhaust = c.stage === 1;
         const active =
           (inlet || exhaust) &&
+          frame.layer === 'gas-combustion' &&
+          frame.systems.running &&
+          window.innerWidth >= 720 &&
           state.flow &&
           !solid &&
           j < 12 + state.rpm / 250;
@@ -707,17 +740,54 @@ export async function createScene(
       model.position.y = Math.sin(a) * vibration;
       model.rotation.z = Math.sin(a * 0.5) * vibration * 0.001;
     }
+    for (const [name, layer] of [
+      ['AirSystem', 'gas-combustion'],
+      ['OilSystem', 'lubrication'],
+      ['CoolantSystem', 'thermal-cooling'],
+      ['HydraulicSystem', 'transmission-hydraulic'],
+    ] as const)
+      setVisible(name, frame.layer === layer);
+    setVisible('SystemMotionAnchors', frame.layer !== 'mechanical');
+    const rotorDt = Math.max(0, frame.systems.time - previousSystemsTime);
+    previousSystemsTime = frame.systems.time;
+    for (const [name, rpm, axis] of [
+      ['SYSTurboRotor', frame.systems.turboRpmNormalized * 2400, 'z'],
+      ['SYSOilPump', frame.systems.oilPumpRpm, 'x'],
+      ['SYSWaterPump', frame.systems.waterPumpRpm, 'x'],
+      ['SYSHydraulicPump', frame.hydraulic?.pumpRpm ?? 0, 'x'],
+      ['SYSStarterRingGear', state.rpm, 'x'],
+      ['SYSStarterRotor', frame.systems.running ? 0 : state.rpm * 8, 'x'],
+    ] as const) {
+      const o = node(name);
+      if (o) {
+        const phase =
+          ((rotorPhases.get(name) ?? 0) + (rpm * rotorDt * Math.PI) / 30) %
+          (Math.PI * 2);
+        rotorPhases.set(name, phase);
+        o.rotation[axis] = phase;
+        o.visible = name.includes('Hydraulic')
+          ? frame.layer === 'transmission-hydraulic'
+          : name.includes('Water')
+            ? frame.layer === 'thermal-cooling'
+            : name.includes('Oil')
+              ? frame.layer === 'lubrication'
+              : frame.layer === 'gas-combustion';
+      }
+    }
+    systemLayers.update(frame);
     controls.update();
     renderer.render(scene, camera);
   };
   return {
     update,
     camera: setCamera,
+    cameraPosition: () => camera.position.toArray() as [number, number, number],
     metrics: () => ({
       calls: renderer.info.render.calls,
       triangles: renderer.info.render.triangles,
     }),
     dispose: () => {
+      systemLayers.dispose();
       renderer.domElement.removeEventListener('pointerdown', onDown);
       renderer.domElement.removeEventListener('pointerup', onUp);
       cleanup();

@@ -260,11 +260,13 @@ export class ExhibitScenarioController {
   private cancelledBy: ScenarioDirective['cancelledBy'];
 
   constructor(
-    private readonly reducedMotion = false,
+    private reducedMotion = false,
     autoStart = true,
   ) {
     this.active = autoStart;
   }
+
+  setReducedMotion(value: boolean) { this.reducedMotion = value; }
 
   start(id: ExhibitScenarioId) {
     this.current = id;

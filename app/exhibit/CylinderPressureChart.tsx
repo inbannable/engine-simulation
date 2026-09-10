@@ -6,9 +6,11 @@ const DASHES = ['', '8 4', '2 3', '12 4 2 4', '5 3 1 3'];
 
 export function CylinderPressureChart({
   samples,
+  selectedCylinder = 1,
   maxPressureBar = 180,
 }: {
   samples: readonly CylinderPressureSample[];
+  selectedCylinder?: number;
   maxPressureBar?: number;
 }) {
   const firstAngle = samples[0]?.angleDeg ?? 0;
@@ -65,11 +67,13 @@ export function CylinderPressureChart({
               fill="none"
               stroke={COLORS[cylinder]}
               strokeDasharray={DASHES[cylinder]}
-              strokeWidth="2.5"
+              strokeWidth={cylinder + 1 === selectedCylinder ? 3 : 1.5}
+              opacity={cylinder + 1 === selectedCylinder ? 1 : 0.5}
               vectorEffect="non-scaling-stroke"
             />
           ))}
-        <text x="306" y="181" textAnchor="middle" fill="#9eacba" fontSize="12">
+        {[0, 180, 360, 540, 720].map(angle => <text key={angle} x={42 + angle / 720 * 528} y="170" textAnchor="middle" fill="#9eacba" fontSize="10">{angle}</text>)}
+        <text x="306" y="188" textAnchor="middle" fill="#9eacba" fontSize="12">
           曲轴转角（°）
         </text>
         <text x="10" y="13" fill="#9eacba" fontSize="12">

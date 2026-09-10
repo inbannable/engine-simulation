@@ -1,3 +1,5 @@
+
+> 当前集成行为、模型统计及验收覆盖以 [INTEGRATION-QA.md](INTEGRATION-QA.md) 为准；下文保留此前专题记录。
 # 验收记录
 
 日期：2026-09-06。平台：本机 macOS / Chrome。网页为本地服务，未托管发布。

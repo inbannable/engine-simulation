@@ -56,6 +56,16 @@ export function ExhibitStatusPanel({
             <dd>{frame.hydraulic.linePressureBar.toFixed(1)} bar</dd>
           </div>
         )}
+        <div><dt>机油温度</dt><dd>{systems.oilTempC.toFixed(0)} °C</dd></div>
+        {frame.layer === 'gas-combustion' && <>
+          <div><dt>涡轮相对转速</dt><dd>{(systems.turboRpmNormalized * 100).toFixed(0)}%（归一化）</dd></div>
+          <div><dt>循环平均扭矩 / 功率</dt><dd>{systems.averageNetTorqueNm.toFixed(0)} Nm / {(systems.averageNetTorqueNm * systems.rpm * Math.PI / 30000).toFixed(0)} kW</dd></div>
+          <div><dt>第 {frame.simulation.selected} 缸压力</dt><dd>{systems.cylinders[frame.simulation.selected - 1]?.pressureBar.toFixed(1)} bar</dd></div>
+        </>}
+        {frame.layer === 'transmission-hydraulic' && frame.hydraulic && <>
+          <div><dt>K1 / K2 压力</dt><dd>{frame.hydraulic.clutchPressureBar.map(p => p.toFixed(1)).join(' / ')} bar</dd></div>
+          <div><dt>K1 / K2 片温</dt><dd>{frame.hydraulic.clutchDiscTempC.map(t => t.toFixed(0)).join(' / ')} °C</dd></div>
+        </>}
       </dl>
       <div
         className={styles.legend}

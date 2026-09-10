@@ -75,6 +75,7 @@ export interface EngineSystemsInput {
 
 export interface EngineBenchInput {
   ignition: boolean;
+  governorEnabled?: boolean;
   starter: boolean;
   throttle: number;
   targetRpm: number;
@@ -108,4 +109,24 @@ export interface EngineSystemsInitialOptions {
   rpm?: number;
   angle?: number;
   warm?: boolean;
+}
+import type { SimulationState } from '../physics';
+import type { PowertrainState } from '../powertrain';
+
+export interface ExhibitCue {
+  id: string;
+  label: string;
+  focus: 'engine' | 'intake' | 'exhaust' | 'turbo' | 'clutch' | 'gears';
+  camera?: string;
+  slowMotion?: number;
+  active: boolean;
+}
+
+export interface EngineFrame {
+  simulation: SimulationState;
+  systems: EngineSystemsState;
+  powertrain?: PowertrainState;
+  hydraulic?: DctHydraulicState;
+  layer: ObservationLayer;
+  cue?: ExhibitCue;
 }

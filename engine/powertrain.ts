@@ -175,6 +175,14 @@ export function frictionImpulse(
   return clamp(slip / inverseInertia, -capacityImpulse, capacityImpulse);
 }
 export class Powertrain {
+  /** Optional coupled solver. Called once inside every mechanical fixed step. */
+  systems?: {
+    step(
+      state: Readonly<PowertrainState>,
+      command: [number, number],
+      seconds: number,
+    ): { torque: number; engagement: [number, number] };
+  };
   state = initialPowertrain();
   input: DriverInput = { throttle: 0, brake: 0, mode: 'N' };
   private remainder = 0;
@@ -363,6 +371,9 @@ export class Powertrain {
       fullThrottleTorque(s.rpm) * s.throttle * clamp((p.limit - s.rpm) / 120) -
       (1 - s.throttle) * (18 + s.rpm * 0.006) +
       idle;
+    const coupled = this.systems?.step(s, [command[0], command[1]], dt);
+    if (coupled)
+      s.engineTorque = coupled.torque * clamp((p.limit - s.rpm) / 120) + idle;
     let omega = s.rpm * RAD + (s.engineTorque / p.engineInertia) * dt;
     const resist =
       p.mass * 9.81 * p.rolling +
@@ -375,7 +386,9 @@ export class Powertrain {
     for (let i = 0; i < 2; i++) {
       const c = s.clutches[i],
         ratio = totalRatio(s.selected[i]);
-      let engagement = command[i];
+      let engagement = coupled ? coupled.engagement[i] : command[i];
+      // Neutral and unlocked selector dogs remain hard mechanical interlocks.
+      if (d.mode === 'N' || !s.selected[i]) engagement = 0;
       if (Math.abs(rpmAtSpeed(s.selected[i], s.speed, p)) < 950)
         engagement *= d.brake > 0.1 ? 0 : 0.05 + 0.35 * d.throttle;
       if (s.rpm < 700) engagement *= clamp((s.rpm - 550) / 150);

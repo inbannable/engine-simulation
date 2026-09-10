@@ -116,19 +116,19 @@
   margin-bottom: 0.25rem;
 }
 
-.legend i:nth-child(1) {
+.legend span:nth-child(1) i {
   background: #1f63d7;
 }
 
-.legend i:nth-child(2) {
+.legend span:nth-child(2) i {
   background: #36c9cb;
 }
 
-.legend i:nth-child(3) {
+.legend span:nth-child(3) i {
   background: #f59335;
 }
 
-.legend i:nth-child(4) {
+.legend span:nth-child(4) i {
   background: #fff2dc;
 }
 
@@ -209,6 +209,8 @@
 }
 
 .coldOverlay {
+  display: block;
+  z-index: 3;
   position: absolute;
   inset: auto 1rem 1rem;
   max-width: 30rem;
@@ -255,5 +257,20 @@
     scroll-behavior: auto;
     transition: none !important;
     animation: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .coldOverlay {
+    inset: auto 0.75rem 0.5rem;
+    padding: 0.6rem;
+    max-width: none;
+  }
+  .coldOverlay h2 {
+    font-size: 1rem;
+  }
+  .coldOverlay p {
+    font-size: 0.8rem;
+    margin-bottom: 0.3rem;
   }
 }

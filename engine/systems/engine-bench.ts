@@ -34,12 +34,13 @@ export class EngineBench {
     public readonly spec: EngineBenchSpec = ENGINE_BENCH_SPEC,
     engineSpec: EngineSystemsSpec = ENGINE_SYSTEMS_SPEC,
     options: EngineSystemsInitialOptions = {},
+    sharedSystems?: EngineSystems,
   ) {
     if (Math.abs(spec.step - engineSpec.step) > 1e-12)
       throw new Error(
         'EngineBench and EngineSystems must use the same fixed step',
       );
-    this.systems = new EngineSystems(engineSpec, options);
+    this.systems = sharedSystems ?? new EngineSystems(engineSpec, options);
     this.input = {
       ignition: false,
       starter: false,
@@ -63,7 +64,14 @@ export class EngineBench {
   configure(next: Partial<EngineBenchInput>) {
     for (const key of Object.keys(next)) {
       if (
-        !['ignition', 'starter', 'throttle', 'targetRpm', 'load'].includes(key)
+        ![
+          'ignition',
+          'starter',
+          'throttle',
+          'targetRpm',
+          'load',
+          'governorEnabled',
+        ].includes(key)
       )
         throw new Error(`Unknown engine bench input: ${key}`);
     }
@@ -75,6 +83,11 @@ export class EngineBench {
       throw new Error('ignition must be boolean');
     if (next.starter !== undefined && typeof next.starter !== 'boolean')
       throw new Error('starter must be boolean');
+    if (
+      next.governorEnabled !== undefined &&
+      typeof next.governorEnabled !== 'boolean'
+    )
+      throw new Error('governorEnabled must be boolean');
     Object.assign(this.input, next);
     return this.state;
   }
@@ -105,9 +118,10 @@ export class EngineBench {
 
     const targetRpm = clamp(input.targetRpm, 0, 7000);
     const speedError = targetRpm - s.rpm;
-    const governor = input.ignition
-      ? clamp(input.load + 0.068 + speedError * 0.00155)
-      : 0;
+    const governor =
+      input.ignition && input.governorEnabled !== false
+        ? clamp(input.load + 0.068 + speedError * 0.00155)
+        : 0;
     s.idleControl = governor;
     s.targetRpm = targetRpm;
     s.load = input.load;

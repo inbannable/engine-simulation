@@ -1,0 +1,6 @@
+{
+  "passed": true,
+  "nodes": 1892,
+  "mesh_definitions": 1503,
+  "checked": "transforms, hierarchy, extras, geometry attributes, indices, materials"
+}
