@@ -10,6 +10,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { chainEnvelope } from './chain';
+import { fitTransmissionCutaway } from './transmission-clearance';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { evaluateEngine, STAGES, mod } from './physics';
 export const CAMERAS: Record<string, number[]> = {
@@ -252,6 +253,7 @@ export async function createScene(
       o.parent?.remove(o);
       if (o instanceof T.Mesh) o.geometry.dispose();
     });
+    fitTransmissionCutaway(model);
     mergeStaticChildren(model);
     scene.add(model);
     onProgress(100);
@@ -521,6 +523,9 @@ export async function createScene(
       setVisible('Accessories', solid);
       setVisible('EngineDetail', solid);
       setVisible('Transmission', true);
+      // The illustrative gear train is exposed only in the internal views.
+      // Its envelope does not exactly match the authored exterior casting.
+      setVisible('TransmissionInternals', !solid);
       setVisible('TransmissionHousing', solid);
       setVisible('TransmissionFittings', solid);
       setVisible('TransmissionOutputs', solid);
